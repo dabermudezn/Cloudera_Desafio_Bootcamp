@@ -1,0 +1,91 @@
+DESARROLLO BOOTCAMP
+
+Ingestar datos de las transacciones de ventas:
+IP: 34.205.65.241
+Puerto: 3306
+Usuario: bootcamp
+Contraseña: bootcamp
+Base de datos: ecommerce
+Tabla: product_transaction
+Motor: MySQL
+
+hdfs dfs -mkdir /user/dbermudez/bd
+hdfs dfs -mkdir /user/dbermudez/log
+hdfs dfs -chmod 777 /user/dbermudez/log
+hdfs dfs -chmod 777 /user/dbermudez/bd
+cd /home/centos/daniel
+wget http://34.205.65.241/access.log
+chmod 777 access.log
+hdfs dfs -put ./access.log /user/dbermudez/log
+sqoop import --driver com.mysql.jdbc.Driver --connect jdbc:mysql://34.205.65.241:3306/ecommerce_cloudera --username bootcamp --password bootcamp --table product_transaction  --split-by transaction_id --target-dir /user/dbermudez/bd --delete-target-dir  --as-parquetfile
+
+CREATE EXTERNAL TABLE daniel.product_transaction LIKE PARQUET '/user/dbermudez/bd/64eac04f-5cea-429a-9768-fe6fbc458ef2.parquet' STORED AS PARQUET LOCATION '/user/dbermudez/bd';
+
+Logs de acceso de Apache Web Server:
+wget http://34.205.65.241/access.log
+
+ip, time_local, method, uri, protocol, status, bytes_sent, referer, useragent
+
+Regex para SerDe en Hive:
+^(\\S+) \\S+ \\S+ \\[([^\\[]+)\\] "(\\w+) (\\S+) (\\S+)" (\\d+) (\\d+) "([^"]+)" "([^"]+)".*
+
+CREATE external TABLE daniel.log (
+ip STRING, 
+time_local STRING, 
+method STRING, 
+uri STRING, 
+protocol STRING, 
+status STRING,
+bytes_sent STRING,
+referer STRING, 
+useragent STRING
+)
+ROW FORMAT SERDE 'org.apache.hadoop.hive.serde2.RegexSerDe' 
+WITH SERDEPROPERTIES ("input.regex" = '^(\\S+) \\S+ \\S+ \\[([^\\[]+)\\] "(\\w+) (\\S+) (\\S+)" (\\d+) (\\d+) "([^"]+)" "([^"]+)".*')
+STORED AS TEXTFILE
+LOCATION "/user/dbermudez/log";
+
+create table v_log as
+select SUBSTR(trim(uri),16) as Codigo, count(SUBSTR(trim(uri),16)) as cantidad
+from log
+where uri like '/item/id?skuID=%'
+group by SUBSTR(trim(uri),16);
+
+create table v_product_transaction as
+select a.product_id, sum(a.product_cantity) as ventas
+from product_transaction a
+group by product_id;
+
+select a.product_id as sku, round(ventas/cantidad, 2) as conversion
+from v_product_transaction a
+inner join v_log b 
+on (a.product_id = b.codigo)
+
+create table conversion_daniel as
+select a.product_id as sku, round(ventas/cantidad, 2) as conversion
+from v_product_transaction a
+inner join v_log b 
+on (a.product_id = b.codigo);
+
+Exportar la convesión por producto a una tabla:
+IP: 34.205.65.241
+Puerto: 3306
+Usuario: bootcamp
+Contraseña: bootcamp
+Base de datos: ecommerce
+Tabla: conversion_1 a conversion_14 (columnas: sku (VARCHAR(50), conversion (VARCHAR(50))
+Motor: MySQL
+
+CREATE TABLE ecommerce_cloudera.conversion_12 (
+  sku varchar(50),
+  conversion int
+);
+
+sqoop export  --connect jdbc:mysql://34.205.65.241:3306/ecommerce_cloudera --username bootcamp --password bootcamp --table conversion_12 --export-dir /user/hive/warehouse/daniel.db/conversion_daniel/conversion_daniel -hcatalog-table conversion_daniel -m 10
+ 
+Objetivo:
+Calcular la conversión de venta de cada sku.
+Fórmula conversión de venta: ventas por producto / visualización producto
+
+La visualización de los productos se hace por medio de la siguiente página web:
+/item/id?skuID=
